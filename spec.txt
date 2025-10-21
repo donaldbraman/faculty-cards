@@ -1,0 +1,19 @@
+Build a Python pipeline that scrapes structured faculty data from the GW Law full-time faculty directory and automatically generates an Anki flashcard deck (.apkg) with photo-front cards.
+
+Functional specification:
+	1.	Input: Public web pages at https://www.law.gwu.edu/full-time-faculty and linked faculty profile pages.
+	2.	Extraction:
+	•	From directory pages: faculty name, title, photo URL, and profile URL.
+	•	From individual profiles: biography text and most recent publication entries (≤3).
+	3.	Data handling:
+	•	Normalize text, download headshots to a media/ folder, and log incomplete records.
+	•	Respect robots.txt and throttle requests.
+	4.	Output:
+	•	For each faculty member, create one Anki card:
+	•	Front: photo only
+	•	Back: name, title, bio, and latest publications list
+	•	Export both gwlaw_faculty.csv (for manual import) and gwlaw_faculty.apkg (ready-to-use deck).
+	5.	Libraries: requests, beautifulsoup4, genanki, hashlib, csv, os, time, random.
+	6.	Execution: Command-line script. Produces all assets in out/ directory.
+
+Purpose: automate end-to-end data acquisition and flashcard generation for study or internal directory reference.
