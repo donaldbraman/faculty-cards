@@ -23,15 +23,15 @@ def faculty_list_pages(start=BASE):
     page = 0
     while True:
         url = start if page == 0 else f"{start}?page={page}"
-        try:
-            resp = get(url)
-        except requests.HTTPError as exc:
-            status = getattr(exc.response, "status_code", None)
-            if status == 404:
-                logger.info("Reached end of pagination at page %d", page)
-                break
-            raise
+        resp = get(url)
         soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Check if there are any faculty cards on this page
+        cards = soup.select("div.gw-person-card")
+        if len(cards) == 0:
+            logger.info("Reached end of pagination at page %d", page)
+            break
+
         yield soup, url
         page += 1
         time.sleep(random.uniform(1.5, 3.0))
@@ -56,12 +56,13 @@ def parse_faculty_cards(soup, page_url):
         if not name:
             logger.warning("Card at %s missing name text", full_url)
             continue
-        # Title is usually a paragraph or div following the name
+        # Title is in the card-person-role paragraph
         title = ""
-        title_candidate = card.find(class_=re.compile("(?i)title")) or card.find("p")
+        title_candidate = card.find(class_="card-person-role")
         if title_candidate:
             title = clean_text(title_candidate.get_text())
-        img = card.find("img")
+        # Get image from card with specific class
+        img = card.find("img", class_="gw-person-card-image")
         img_url = urljoin(page_url, img.get("src")) if img and img.get("src") else None
         entries.append({"name": name, "title": title, "profile_url": full_url, "img_url": img_url})
     # de-duplicate by profile_url
@@ -81,72 +82,28 @@ def clean_text(txt):
 def fetch_profile(profile_url):
     resp = get(profile_url)
     soup = BeautifulSoup(resp.text, "html.parser")
-    # Name and title
-    h1 = soup.find(["h1","h2"], string=True)
-    name = clean_text(h1.get_text()) if h1 else ""
-    # Title line often sits near the H1
-    title = ""
-    if h1:
-        for sib in h1.next_siblings:
-            if getattr(sib, "name", None) in ["p","div"]:
-                t = clean_text(sib.get_text())
-                if t and len(t) < 300:
-                    title = t
-                    break
-    # Bio: first substantial paragraph after title/name
-    bio = ""
-    for p in soup.select("p"):
-        t = clean_text(p.get_text())
-        if t and len(t) > 120 and "Contact:" not in t:
-            bio = t
-            break
-    # Research profiles and publications
-    pubs = []
-    # On-page “Publications” anchor
-    pub_hdr = soup.find(id=re.compile("(?i)publications")) or soup.find(string=re.compile("(?i)^Publications$"))
-    if pub_hdr:
-        # Collect following list items or paragraphs
-        container = pub_hdr.parent if hasattr(pub_hdr, "parent") else soup
-        for li in container.find_all(["li","p"]):
-            t = clean_text(li.get_text())
-            if 5 < len(t) < 500:
-                pubs.append(t)
-            if len(pubs) >= 3:
-                break
-    # If empty, try Scholarly Commons or SSRN
-    if len(pubs) == 0:
-        sc = soup.find("a", href=re.compile(r"scholarship\.law\.gwu\.edu|papers\.ssrn\.com"))
-        if sc:
-            try:
-                pubs = fetch_latest_from_profile(sc.get("href"))
-            except Exception:
-                pubs = []
-    # Image: prefer explicit img under profile header
-    img = soup.select_one("img")
-    img_url = urljoin(profile_url, img.get("src")) if img and img.get("src") else None
-    return {
-        "name": name,
-        "title": title,
-        "bio": bio,
-        "img_url": img_url,
-        "publications": pubs[:3]
-    }
 
-def fetch_latest_from_profile(url):
-    # Simple best-effort: fetch first 3 items from profile page
-    resp = get(url)
-    soup = BeautifulSoup(resp.text, "html.parser")
-    items = []
-    for sel in ["li", ".article-title", "h3", "p"]:
-        for node in soup.select(sel):
-            t = clean_text(node.get_text())
-            if t and len(t) > 10:
-                items.append(t)
-            if len(items) >= 3:
+    # Bio: first substantial paragraph in main content area
+    bio = ""
+    main = soup.find("main")
+    if main:
+        for p in main.find_all("p"):
+            t = clean_text(p.get_text())
+            # Skip short text, contact info, and email addresses
+            if t and len(t) > 120 and "Contact:" not in t and "Email" not in t and "@" not in t:
+                bio = t
                 break
-        if len(items) >= 3:
-            break
-    return items[:3]
+
+    # If no bio found in main, try all paragraphs
+    if not bio:
+        for p in soup.select("p"):
+            t = clean_text(p.get_text())
+            if t and len(t) > 120 and "Contact:" not in t and "Email" not in t and "@" not in t:
+                bio = t
+                break
+
+    return {"bio": bio}
+
 
 def download_image(url):
     if not url:
@@ -177,34 +134,25 @@ def scrape_all():
     for prof in keyed.values():
         logger.info("Fetching profile %s", prof["profile_url"])
         data = fetch_profile(prof["profile_url"])
-        # prefer list card title if profile title missing
-        if not data["title"]:
-            data["title"] = prof.get("title","")
-        # prefer list card image if profile image missing
-        if not data["img_url"]:
-            data["img_url"] = prof.get("img_url")
-        record = {**prof, **data}
+        # Merge card data with profile data (card data takes precedence)
+        record = {**data, **prof}
         if not record.get("bio"):
             logger.warning("Missing bio for %s", record.get("name") or record["profile_url"])
-        if not record.get("publications"):
-            logger.warning("Missing publications for %s", record.get("name") or record["profile_url"])
         out.append(record)
         time.sleep(random.uniform(1.5, 3.0))
     return out
 
 def export_csv(rows, path):
-    fields = ["FrontImage","Name","Title","Bio","Publications","SourceURL","ImageSource"]
+    fields = ["FrontImage","Name","Title","Bio","SourceURL","ImageSource"]
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
         w.writeheader()
         for r in rows:
-            pubs = " • ".join(r.get("publications") or [])
             w.writerow({
                 "FrontImage": r.get("image_filename") or "",
                 "Name": r.get("name",""),
                 "Title": r.get("title",""),
                 "Bio": r.get("bio",""),
-                "Publications": pubs,
                 "SourceURL": r.get("profile_url",""),
                 "ImageSource": r.get("img_url",""),
             })
@@ -218,13 +166,12 @@ def export_apkg(rows, path):
             {"name":"Name"},
             {"name":"Title"},
             {"name":"Bio"},
-            {"name":"Publications"},
             {"name":"SourceURL"},
         ],
         templates=[{
             "name":"Card 1",
             "qfmt":"<div style='text-align:center;'>{{FrontImage}}</div>",
-            "afmt":"{{FrontSide}}<hr><h2>{{Name}}</h2><div><i>{{Title}}</i></div><div style='margin-top:8px;'>{{Bio}}</div><div style='margin-top:8px;'><b>Latest publications</b><br>{{Publications}}</div><div style='margin-top:8px;'><a href='{{SourceURL}}'>Profile</a></div>",
+            "afmt":"{{FrontSide}}<hr><h2>{{Name}}</h2><div><i>{{Title}}</i></div><div style='margin-top:8px;'>{{Bio}}</div><div style='margin-top:8px;'><a href='{{SourceURL}}'>Profile</a></div>",
         }],
         css=".card { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial; font-size: 16px; } img { max-width: 100%; height:auto; }")
     deck = genanki.Deck(2059400110, "GW Law — Full-Time Faculty")
@@ -236,7 +183,7 @@ def export_apkg(rows, path):
             media.append(os.path.join(MEDIA_DIR, r["image_filename"]))
         note = genanki.Note(
             model=model,
-            fields=[front_html, r.get("name",""), r.get("title",""), r.get("bio",""), " • ".join(r.get("publications") or []), r.get("profile_url","")],
+            fields=[front_html, r.get("name",""), r.get("title",""), r.get("bio",""), r.get("profile_url","")],
             tags=["gwlaw","full-time-faculty", (r.get("name","")[:1] or "_").lower()]
         )
         deck.add_note(note)
