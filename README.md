@@ -1,5 +1,9 @@
 # Faculty Cards
 
+[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+
 A Python pipeline that scrapes structured faculty data from the GW Law full-time faculty directory and automatically generates Anki flashcard decks with photo-front cards.
 
 ## Features
@@ -79,7 +83,7 @@ The script creates an `out/` directory containing:
 
 ## License
 
-See LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Purpose
 

@@ -1,6 +1,14 @@
 # scrape_gwlaw_anki.py
-import os, re, time, random, csv, hashlib, logging
+import os
+import re
+import time
+import random
+import csv
+import hashlib
+import logging
+from typing import Generator, Optional
 from urllib.parse import urljoin, urlparse
+
 import requests
 from bs4 import BeautifulSoup
 import genanki
@@ -12,14 +20,19 @@ MEDIA_DIR = os.path.join(OUT_DIR, "media")
 os.makedirs(MEDIA_DIR, exist_ok=True)
 logger = logging.getLogger(__name__)
 
-def get(url):
+def get(url: str) -> requests.Response:
+    """Fetch a URL with proper headers and error handling."""
     logger.debug("Requesting %s", url)
     r = requests.get(url, headers=HEADERS, timeout=30)
     r.raise_for_status()
     logger.debug("Received %s (%s)", url, r.status_code)
     return r
 
-def faculty_list_pages(start=BASE):
+
+def faculty_list_pages(
+    start: str = BASE,
+) -> Generator[tuple[BeautifulSoup, str], None, None]:
+    """Iterate through paginated faculty directory pages."""
     page = 0
     while True:
         url = start if page == 0 else f"{start}?page={page}"
@@ -36,7 +49,8 @@ def faculty_list_pages(start=BASE):
         page += 1
         time.sleep(random.uniform(1.5, 3.0))
 
-def parse_faculty_cards(soup, page_url):
+
+def parse_faculty_cards(soup: BeautifulSoup, page_url: str) -> list[dict[str, str]]:
     entries = []
     cards = soup.select("div.gw-person-card")
     logger.debug("Found %d gw-person-card divs on %s", len(cards), page_url)
@@ -75,11 +89,13 @@ def parse_faculty_cards(soup, page_url):
         seen.add(entry["profile_url"])
     return uniq
 
-def clean_text(txt):
+def clean_text(txt: Optional[str]) -> str:
+    """Normalize whitespace in text."""
     txt = re.sub(r"\s+", " ", txt or "").strip()
     return txt
 
-def fetch_profile(profile_url):
+
+def fetch_profile(profile_url: str) -> dict[str, str]:
     resp = get(profile_url)
     soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -105,7 +121,8 @@ def fetch_profile(profile_url):
     return {"bio": bio}
 
 
-def download_image(url):
+def download_image(url: Optional[str]) -> Optional[tuple[str, str]]:
+    """Download an image and return (path, filename)."""
     if not url:
         return None
     filename = hashlib.sha1(url.encode()).hexdigest() + os.path.splitext(urlparse(url).path)[1][:5]
@@ -120,7 +137,7 @@ def download_image(url):
         logger.debug("Image already exists %s", path)
     return path, filename
 
-def scrape_all():
+def scrape_all() -> list[dict[str, str]]:
     people = []
     for soup, url in faculty_list_pages():
         entries = parse_faculty_cards(soup, url)
@@ -142,7 +159,7 @@ def scrape_all():
         time.sleep(random.uniform(1.5, 3.0))
     return out
 
-def export_csv(rows, path):
+def export_csv(rows: list[dict[str, str]], path: str) -> None:
     fields = ["FrontImage","Name","Title","Bio","SourceURL","ImageSource"]
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fields)
@@ -157,7 +174,7 @@ def export_csv(rows, path):
                 "ImageSource": r.get("img_url",""),
             })
 
-def export_apkg(rows, path):
+def export_apkg(rows: list[dict[str, str]], path: str) -> None:
     model = genanki.Model(
         1607392319,
         "GW Faculty Photo→Back",
@@ -192,7 +209,7 @@ def export_apkg(rows, path):
     pkg.write_to_file(path)
     logger.info("Wrote Anki package with %d notes to %s", len(rows), path)
 
-def main():
+def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s",
