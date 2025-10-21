@@ -43,3 +43,4 @@ Thumbs.db
 
 # uv
 .uv/
+scraper_run.log
